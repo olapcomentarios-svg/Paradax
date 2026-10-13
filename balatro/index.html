@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, minimum-scale=1, maximum-scale=1">
+    <title>Balatro (web)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1e2b2d; overflow: hidden; font-family: sans-serif; color: #ddd; }
+      #wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+      /* the canvas must not have border or padding, or mouse coords will be wrong */
+      #canvas { display: block; border: 0; padding: 0; visibility: hidden; }
+      #loadingCanvas { display: block; }
+      #bar { position: fixed; right: 8px; bottom: 6px; font-size: 12px; opacity: .6; }
+      #bar button { font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas id="loadingCanvas" oncontextmenu="event.preventDefault()" width="800" height="450"></canvas>
+      <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
+    </div>
+    <div id="bar"><span id="savestate"></span> <button onclick="goFullScreen()">Pantalla completa</button></div>
+
+    <script type='text/javascript'>
+      // Scale the fixed-size game canvas (set in conf.lua) to fit the browser window keeping 16:9
+      function fitCanvas() {
+        var c = document.getElementById('canvas');
+        if (!c.width || !c.height) return;
+        var s = Math.min(window.innerWidth / c.width, window.innerHeight / c.height);
+        c.style.width = Math.floor(c.width * s) + 'px';
+        c.style.height = Math.floor(c.height * s) + 'px';
+      }
+      window.addEventListener('resize', fitCanvas);
+      setInterval(fitCanvas, 1000);
+
+      function goFullScreen() {
+        var el = document.documentElement;
+        (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el);
+      }
+
+      // love.js only writes the save folder (IndexedDB) to disk on 'beforeunload'.
+      // Flush it every few seconds as well so progress is not lost if the tab is killed.
+      var syncing = false;
+      function flushSaves() {
+        var FS = Module.FS; // exposed by build.sh's patch to love.js, only after the saves were loaded from IndexedDB
+        if (syncing || !FS || !FS.syncfs) return;
+        syncing = true;
+        FS.syncfs(false, function (err) {
+          syncing = false;
+          document.getElementById('savestate').textContent = err ? 'Error al guardar (ver consola)' : '';
+          if (err) console.error('IDBFS sync error', err);
+        });
+      }
+      // IDBFS syncs can briefly occupy the browser main thread. Keep them
+      // infrequent while playing and flush immediately when leaving the page.
+      setInterval(flushSaves, 30000);
+      document.addEventListener('visibilitychange', function () { if (document.hidden) flushSaves(); });
+      window.addEventListener('pagehide', flushSaves);
+
+      var loadingContext = document.getElementById('loadingCanvas').getContext('2d');
+      function drawLoadingText(text) {
+        var canvas = loadingContext.canvas;
+        loadingContext.fillStyle = "#1e2b2d";
+        loadingContext.fillRect(0, 0, canvas.width, canvas.height);
+        loadingContext.font = '28px sans-serif';
+        loadingContext.textAlign = 'center';
+        loadingContext.fillStyle = "#e0e0e0";
+        loadingContext.fillText(text, canvas.width / 2, canvas.height / 2);
+      }
+
+      window.onload = function () { window.focus(); };
+      window.onclick = function () { window.focus(); };
+
+      // LÖVE/Emscripten captura el teclado globalmente y cancela la acción
+      // predeterminada de las teclas que recibe. Interceptamos antes los atajos
+      // de cierre y los dejamos en manos del navegador/sistema operativo.
+      window.addEventListener('keydown', function (event) {
+        var key = (event.key || '').toLowerCase();
+        var closeTab = event.ctrlKey && (key === 'w' || event.code === 'KeyW');
+        var closeWindow = event.altKey && (key === 'f4' || event.code === 'F4');
+        if (closeTab || closeWindow) event.stopImmediatePropagation();
+      }, true);
+
+      window.addEventListener("keydown", function(e) {
+        if ([32, 37, 38, 39, 40].indexOf(e.keyCode) > -1) e.preventDefault();
+      }, false);
+
+      var ASSET_VERSION = '20261010-5';
+      var Module = {
+        arguments: ["./game.love"],
+        INITIAL_MEMORY: 268435456,
+        locateFile: function(path) {
+          return path + '?v=' + ASSET_VERSION;
+        },
+        printErr: console.error.bind(console),
+        canvas: (function() {
+          var canvas = document.getElementById('canvas');
+          canvas.addEventListener("webglcontextlost", function(e) { alert('WebGL context lost. Recarga la página.'); e.preventDefault(); }, false);
+          return canvas;
+        })(),
+        setStatus: function(text) {
+          if (text) {
+            drawLoadingText(text);
+          } else if (Module.remainingDependencies === 0) {
+            document.getElementById('loadingCanvas').style.display = 'none';
+            document.getElementById('canvas').style.visibility = 'visible';
+            fitCanvas();
+          }
+        },
+        totalDependencies: 0,
+        remainingDependencies: 0,
+        monitorRunDependencies: function(left) {
+          this.remainingDependencies = left;
+          this.totalDependencies = Math.max(this.totalDependencies, left);
+          Module.setStatus(left ? 'Cargando... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : 'Descarga completa.');
+        }
+      };
+      Module.setStatus('Descargando...');
+      window.onerror = function(event) {
+        Module.setStatus('Excepción: mira la consola (F12)');
+        Module.setStatus = function(text) { if (text) Module.printErr('[post-exception status] ' + text); };
+      };
+
+      var applicationLoad = function(e) { Love(Module); };
+    </script>
+    <script type="text/javascript" src="game.js?v=20261010-5"></script>
+    <script async type="text/javascript" src="love.js?v=20261010-5" onload="applicationLoad(this)"></script>
+  </body>
+</html>
